@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Locus — Delhi NCR Restaurant Scout</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    #app { display: flex; height: 100vh; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 340px;
+      min-width: 340px;
+      display: flex;
+      flex-direction: column;
+      background: #141622;
+      border-right: 1px solid #252840;
+      overflow: hidden;
+      z-index: 1000;
+    }
+
+    #header {
+      padding: 18px 20px 14px;
+      background: #0f1117;
+      border-bottom: 1px solid #252840;
+      flex-shrink: 0;
+    }
+
+    #header h1 {
+      font-size: 20px;
+      font-weight: 800;
+      color: #f7941d;
+      letter-spacing: -0.5px;
+    }
+
+    #header p {
+      font-size: 11px;
+      color: #4a5568;
+      margin-top: 3px;
+      letter-spacing: 0.3px;
+    }
+
+    /* ── Controls ── */
+    #controls {
+      padding: 14px 20px;
+      border-bottom: 1px solid #252840;
+      background: #0f1117;
+      flex-shrink: 0;
+    }
+
+    .ctrl-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #4a5568;
+      margin-bottom: 8px;
+      display: block;
+    }
+
+    .radius-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    #radius-slider {
+      flex: 1;
+      -webkit-appearance: none;
+      height: 3px;
+      background: #252840;
+      border-radius: 2px;
+      outline: none;
+      cursor: pointer;
+    }
+
+    #radius-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 15px;
+      height: 15px;
+      border-radius: 50%;
+      background: #f7941d;
+      cursor: pointer;
+      box-shadow: 0 0 6px rgba(247,148,29,0.4);
+    }
+
+    #radius-display {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f7941d;
+      min-width: 44px;
+      text-align: right;
+    }
+
+    /* ── Legend ── */
+    #legend {
+      padding: 10px 20px;
+      border-bottom: 1px solid #252840;
+      display: flex;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 10px;
+      color: #718096;
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── Location panel ── */
+    #location-panel {
+      padding: 12px 20px 14px;
+      border-bottom: 1px solid #252840;
+      flex-shrink: 0;
+    }
+
+    #location-name {
+      font-size: 14px;
+      font-weight: 600;
+      color: #e2e8f0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    #location-coords {
+      font-size: 10px;
+      color: #4a5568;
+      margin-top: 2px;
+      font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+
+    #rent-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      margin-top: 8px;
+      padding: 4px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 600;
+      border: 1px solid transparent;
+    }
+
+    #rent-badge.high    { background: rgba(229,62,62,0.12); color: #fc8181; border-color: rgba(229,62,62,0.25); }
+    #rent-badge.medium  { background: rgba(237,137,54,0.12); color: #f6ad55; border-color: rgba(237,137,54,0.25); }
+    #rent-badge.cheap   { background: rgba(72,187,120,0.12); color: #68d391; border-color: rgba(72,187,120,0.25); }
+    #rent-badge.unknown { background: rgba(113,128,150,0.12); color: #a0aec0; border-color: rgba(113,128,150,0.25); }
+
+    /* ── Scroll area ── */
+    #results-scroll {
+      flex: 1;
+      overflow-y: auto;
+      scroll-behavior: smooth;
+    }
+
+    #results-scroll::-webkit-scrollbar { width: 3px; }
+    #results-scroll::-webkit-scrollbar-track { background: transparent; }
+    #results-scroll::-webkit-scrollbar-thumb { background: #252840; border-radius: 2px; }
+
+    /* ── Placeholder ── */
+    #placeholder {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100%;
+      gap: 14px;
+      padding: 40px 28px;
+      text-align: center;
+      color: #4a5568;
+    }
+
+    #placeholder .icon { font-size: 40px; opacity: 0.4; }
+
+    #placeholder p {
+      font-size: 13px;
+      line-height: 1.6;
+      color: #4a5568;
+    }
+
+    #placeholder strong { color: #718096; }
+
+    /* ── Loading ── */
+    .loading {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 50px 20px;
+      gap: 12px;
+      color: #718096;
+      font-size: 12px;
+    }
+
+    .spinner {
+      width: 24px;
+      height: 24px;
+      border: 2px solid #252840;
+      border-top-color: #f7941d;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Summary pills ── */
+    .summary-bar {
+      display: flex;
+      gap: 6px;
+      padding: 12px 16px;
+      background: #0f1117;
+      border-bottom: 1px solid #252840;
+    }
+
+    .summary-pill {
+      flex: 1;
+      background: #141622;
+      border: 1px solid #252840;
+      border-radius: 8px;
+      padding: 8px 4px;
+      text-align: center;
+    }
+
+    .summary-pill .sval {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .summary-pill .slbl {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: #4a5568;
+      margin-top: 3px;
+    }
+
+    .summary-pill.sp-students .sval { color: #63b3ed; }
+    .summary-pill.sp-workers  .sval { color: #b794f4; }
+    .summary-pill.sp-transit  .sval { color: #f6ad55; }
+
+    /* ── Score bar ── */
+    .score-bar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      background: #0f1117;
+      border-bottom: 1px solid #252840;
+    }
+
+    .score-label { font-size: 10px; color: #4a5568; text-transform: uppercase; letter-spacing: 0.8px; flex-shrink: 0; }
+
+    .score-track {
+      flex: 1;
+      height: 5px;
+      background: #252840;
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .score-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.5s ease;
+    }
+
+    .score-val { font-size: 11px; font-weight: 700; flex-shrink: 0; }
+
+    .score-low    .score-fill { background: #fc8181; }
+    .score-medium .score-fill { background: #f6ad55; }
+    .score-high   .score-fill { background: #68d391; }
+    .score-low    .score-val  { color: #fc8181; }
+    .score-medium .score-val  { color: #f6ad55; }
+    .score-high   .score-val  { color: #68d391; }
+
+    /* ── Category sections ── */
+    .cat-section { border-bottom: 1px solid #1a1e2e; }
+
+    .cat-header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 16px;
+      cursor: pointer;
+      user-select: none;
+      transition: background 0.15s;
+    }
+
+    .cat-header:hover { background: #1a1e2e; }
+
+    .cat-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+
+    .cs-students  .cat-icon { background: rgba(66,153,225,0.12); }
+    .cs-workers   .cat-icon { background: rgba(128,90,213,0.12); }
+    .cs-govt      .cat-icon { background: rgba(49,130,206,0.12); }
+    .cs-transit   .cat-icon { background: rgba(237,137,54,0.12); }
+    .cs-markets   .cat-icon { background: rgba(72,187,120,0.12); }
+
+    .cat-title { flex: 1; font-size: 12px; font-weight: 600; }
+
+    .cat-count {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+
+    .cs-students  .cat-count { background: rgba(66,153,225,0.12); color: #63b3ed; }
+    .cs-workers   .cat-count { background: rgba(128,90,213,0.12); color: #b794f4; }
+    .cs-govt      .cat-count { background: rgba(49,130,206,0.12); color: #76e4f7; }
+    .cs-transit   .cat-count { background: rgba(237,137,54,0.12); color: #f6ad55; }
+    .cs-markets   .cat-count { background: rgba(72,187,120,0.12); color: #68d391; }
+
+    .cat-chevron { font-size: 10px; color: #4a5568; transition: transform 0.2s; }
+    .cat-section.collapsed .cat-chevron { transform: rotate(-90deg); }
+
+    .cat-items { padding: 0 16px 8px; }
+    .cat-section.collapsed .cat-items { display: none; }
+
+    .poi-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid #1a1e2e;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+
+    .poi-row:last-child { border-bottom: none; }
+    .poi-row:hover { opacity: 0.75; }
+
+    .poi-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
+
+    .poi-info { flex: 1; min-width: 0; }
+
+    .poi-name {
+      font-size: 12px;
+      color: #cbd5e0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .poi-type {
+      font-size: 10px;
+      color: #4a5568;
+      text-transform: capitalize;
+      margin-top: 1px;
+    }
+
+    /* ── Error ── */
+    .error-msg {
+      padding: 24px 20px;
+      color: #fc8181;
+      font-size: 12px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    .no-results {
+      padding: 24px 20px;
+      color: #4a5568;
+      font-size: 12px;
+      text-align: center;
+      line-height: 1.5;
+    }
+
+    /* ── Map ── */
+    #map { flex: 1; }
+
+    .leaflet-container { background: #141622 !important; }
+
+    .rent-tip {
+      background: rgba(15,17,23,0.92) !important;
+      border: 1px solid #252840 !important;
+      color: #a0aec0 !important;
+      font-size: 11px !important;
+      border-radius: 6px !important;
+      padding: 4px 8px !important;
+      box-shadow: none !important;
+    }
+
+    .rent-tip::before { display: none; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Sidebar ── -->
+  <div id="sidebar">
+    <div id="header">
+      <h1>Locus</h1>
+      <p>Delhi & NCR · Dosa QSR Location Scout</p>
+    </div>
+
+    <div id="controls">
+      <span class="ctrl-label">Search Radius</span>
+      <div class="radius-row">
+        <input type="range" id="radius-slider" min="300" max="5000" step="100" value="1000">
+        <span id="radius-display">1 km</span>
+      </div>
+    </div>
+
+    <div id="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:#e53e3e;opacity:0.7"></div> High rent</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#dd6b20;opacity:0.7"></div> Medium</div>
+      <div class="legend-item"><div class="legend-dot" style="background:#38a169;opacity:0.7"></div> Affordable</div>
+    </div>
+
+    <div id="location-panel" style="display:none">
+      <div id="location-name">—</div>
+      <div id="location-coords"></div>
+      <div id="rent-badge"></div>
+    </div>
+
+    <div id="results-scroll">
+      <div id="placeholder">
+        <div class="icon">📍</div>
+        <p>Click anywhere on the map to analyze a location.<br><strong>Adjust the radius</strong> to expand or shrink the search area.</p>
+        <p style="margin-top:8px;font-size:11px;">Colored zones show approximate rent levels across Delhi NCR.</p>
+      </div>
+      <div id="results" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- ── Map ── -->
+  <div id="map"></div>
+
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────────
+// RENT ZONE DATA  (approximate, based on known market conditions)
+// ─────────────────────────────────────────────────────────────────
+const RENT_ZONES = [
+  // ── HIGH RENT ──
+  { name:"Connaught Place",       lat:28.6319, lng:77.2195, cat:"high",   r:1400 },
+  { name:"Lutyens Delhi",         lat:28.6129, lng:77.2090, cat:"high",   r:2400 },
+  { name:"Hauz Khas Village",     lat:28.5494, lng:77.2001, cat:"high",   r:1100 },
+  { name:"Green Park",            lat:28.5592, lng:77.2100, cat:"high",   r:800  },
+  { name:"Khan Market",           lat:28.5998, lng:77.2273, cat:"high",   r:600  },
+  { name:"South Extension",       lat:28.5716, lng:77.2175, cat:"high",   r:900  },
+  { name:"Greater Kailash I & II",lat:28.5383, lng:77.2441, cat:"high",   r:2000 },
+  { name:"Defence Colony",        lat:28.5706, lng:77.2276, cat:"high",   r:1200 },
+  { name:"Vasant Kunj",           lat:28.5222, lng:77.1555, cat:"high",   r:2000 },
+  { name:"Saket",                 lat:28.5246, lng:77.2146, cat:"high",   r:1500 },
+  { name:"Nehru Place",           lat:28.5491, lng:77.2519, cat:"high",   r:800  },
+  { name:"Cyber City Gurugram",   lat:28.4947, lng:77.0888, cat:"high",   r:2000 },
+  { name:"Golf Course Road",      lat:28.4595, lng:77.1006, cat:"high",   r:2500 },
+  { name:"MG Road Gurugram",      lat:28.4776, lng:77.0890, cat:"high",   r:1500 },
+  { name:"Sushant Lok",           lat:28.4701, lng:77.0793, cat:"high",   r:1200 },
+  { name:"Noida Sector 18",       lat:28.5706, lng:77.3219, cat:"high",   r:1400 },
+  { name:"Noida Sector 62",       lat:28.6272, lng:77.3799, cat:"high",   r:1500 },
+  { name:"Noida City Centre",     lat:28.5844, lng:77.3323, cat:"high",   r:900  },
+  { name:"Vasant Vihar",          lat:28.5680, lng:77.1700, cat:"high",   r:1200 },
+  { name:"Lajpat Nagar Market",   lat:28.5677, lng:77.2431, cat:"high",   r:700  },
+
+  // ── MEDIUM RENT ──
+  { name:"Dwarka",                lat:28.5823, lng:77.0587, cat:"medium", r:5000 },
+  { name:"Janakpuri",             lat:28.6290, lng:77.0855, cat:"medium", r:2000 },
+  { name:"Rohini",                lat:28.7358, lng:77.1078, cat:"medium", r:4500 },
+  { name:"Pitampura",             lat:28.7039, lng:77.1299, cat:"medium", r:2000 },
+  { name:"Preet Vihar",           lat:28.6431, lng:77.2962, cat:"medium", r:1500 },
+  { name:"Mayur Vihar",           lat:28.6093, lng:77.3012, cat:"medium", r:2000 },
+  { name:"Malviya Nagar",         lat:28.5377, lng:77.2048, cat:"medium", r:1200 },
+  { name:"Karol Bagh",            lat:28.6519, lng:77.1909, cat:"medium", r:1500 },
+  { name:"Rajouri Garden",        lat:28.6467, lng:77.1213, cat:"medium", r:1500 },
+  { name:"Uttam Nagar",           lat:28.6209, lng:77.0586, cat:"medium", r:2000 },
+  { name:"Patparganj",            lat:28.6252, lng:77.2949, cat:"medium", r:1500 },
+  { name:"Indirapuram",           lat:28.6421, lng:77.3619, cat:"medium", r:2500 },
+  { name:"Sohna Road Gurugram",   lat:28.4102, lng:77.0415, cat:"medium", r:3000 },
+  { name:"Palam Vihar",           lat:28.5099, lng:77.0414, cat:"medium", r:2000 },
+  { name:"Noida Sector 44–63",    lat:28.5600, lng:77.3500, cat:"medium", r:3000 },
+  { name:"Vivek Vihar",           lat:28.6685, lng:77.3170, cat:"medium", r:1500 },
+  { name:"Sahibabad",             lat:28.6741, lng:77.3651, cat:"medium", r:2000 },
+  { name:"Karkardooma",           lat:28.6630, lng:77.3020, cat:"medium", r:1500 },
+  { name:"Paschim Vihar",         lat:28.6749, lng:77.0934, cat:"medium", r:1800 },
+  { name:"Tilak Nagar",           lat:28.6402, lng:77.1020, cat:"medium", r:1200 },
+  { name:"Vikaspuri",             lat:28.6346, lng:77.0732, cat:"medium", r:1500 },
+
+  // ── CHEAP RENT ──
+  { name:"Old Delhi / Chandni Chowk", lat:28.6562, lng:77.2291, cat:"cheap", r:2500 },
+  { name:"Shahdara",              lat:28.6733, lng:77.2894, cat:"cheap", r:3000 },
+  { name:"Seelampur",             lat:28.6829, lng:77.2756, cat:"cheap", r:2000 },
+  { name:"Badarpur",              lat:28.5016, lng:77.3005, cat:"cheap", r:2000 },
+  { name:"Okhla Phase I",         lat:28.5355, lng:77.2791, cat:"cheap", r:1800 },
+  { name:"Faridabad",             lat:28.4089, lng:77.3178, cat:"cheap", r:6000 },
+  { name:"Ballabhgarh",           lat:28.3472, lng:77.3265, cat:"cheap", r:3000 },
+  { name:"Ghaziabad",             lat:28.6692, lng:77.4538, cat:"cheap", r:5000 },
+  { name:"Loni",                  lat:28.7492, lng:77.2882, cat:"cheap", r:3000 },
+  { name:"Najafgarh",             lat:28.6097, lng:76.9799, cat:"cheap", r:3500 },
+  { name:"Narela",                lat:28.8565, lng:77.0934, cat:"cheap", r:3000 },
+  { name:"Burari",                lat:28.7554, lng:77.1998, cat:"cheap", r:2000 },
+  { name:"Bawana",                lat:28.7858, lng:77.0344, cat:"cheap", r:3000 },
+  { name:"Mehrauli",              lat:28.5245, lng:77.1830, cat:"cheap", r:1500 },
+  { name:"Sangam Vihar",          lat:28.5023, lng:77.2347, cat:"cheap", r:2000 },
+  { name:"Govindpuri",            lat:28.5294, lng:77.2596, cat:"cheap", r:1500 },
+];
+
+// ─────────────────────────────────────────────────────────────────
+// MAP INIT
+// ─────────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [28.6139, 77.2090],
+  zoom: 11,
+  zoomControl: true,
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+  subdomains: 'abcd',
+  maxZoom: 19,
+}).addTo(map);
+
+// Draw rent zone circles
+const ZONE_COLORS = { high: '#e53e3e', medium: '#dd6b20', cheap: '#38a169' };
+const ZONE_LABELS = { high: '🔴 High Rent', medium: '🟡 Medium Rent', cheap: '🟢 Affordable' };
+
+RENT_ZONES.forEach(z => {
+  L.circle([z.lat, z.lng], {
+    radius: z.r,
+    color: ZONE_COLORS[z.cat],
+    fillColor: ZONE_COLORS[z.cat],
+    fillOpacity: 0.07,
+    weight: 0.8,
+    opacity: 0.3,
+  }).bindTooltip(`<strong>${z.name}</strong><br>${ZONE_LABELS[z.cat]}`, {
+    sticky: true,
+    className: 'rent-tip',
+  }).addTo(map);
+});
+
+// ─────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────
+let currentMarker = null;
+let currentCircle = null;
+let poiLayers = [];
+let currentRadius = 1000;
+let pendingQuery = null;
+
+// ─────────────────────────────────────────────────────────────────
+// RADIUS SLIDER
+// ─────────────────────────────────────────────────────────────────
+const slider = document.getElementById('radius-slider');
+const radiusDisplay = document.getElementById('radius-display');
+
+function formatRadius(m) {
+  if (m >= 1000) return (m / 1000).toFixed(1).replace('.0', '') + ' km';
+  return m + ' m';
+}
+
+slider.addEventListener('input', () => {
+  currentRadius = parseInt(slider.value);
+  radiusDisplay.textContent = formatRadius(currentRadius);
+  if (currentMarker) {
+    redrawCircle(currentMarker.getLatLng());
+    scheduleQuery(currentMarker.getLatLng().lat, currentMarker.getLatLng().lng, currentRadius);
+  }
+});
+
+function redrawCircle(latlng) {
+  if (currentCircle) map.removeLayer(currentCircle);
+  currentCircle = L.circle(latlng, {
+    radius: currentRadius,
+    color: '#f7941d',
+    fillColor: '#f7941d',
+    fillOpacity: 0.04,
+    weight: 1.5,
+    dashArray: '6 4',
+  }).addTo(map);
+}
+
+// Debounce slider changes
+function scheduleQuery(lat, lng, radius) {
+  if (pendingQuery) clearTimeout(pendingQuery);
+  pendingQuery = setTimeout(() => {
+    queryAndRender(lat, lng, radius);
+    pendingQuery = null;
+  }, 600);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// HAVERSINE DISTANCE (meters)
+// ─────────────────────────────────────────────────────────────────
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+  const a = Math.sin(Δφ/2)**2 + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RENT ZONE LOOKUP
+// ─────────────────────────────────────────────────────────────────
+function getRentZone(lat, lng) {
+  // Find all zones that contain this point
+  const matches = [];
+  for (const z of RENT_ZONES) {
+    const d = haversine(lat, lng, z.lat, z.lng);
+    if (d <= z.r) matches.push({ ...z, d });
+  }
+
+  if (matches.length > 0) {
+    // Priority: high > medium > cheap, then by distance
+    const priority = { high: 0, medium: 1, cheap: 2 };
+    matches.sort((a, b) => priority[a.cat] - priority[b.cat] || a.d - b.d);
+    return matches[0];
+  }
+
+  // Fall back to nearest zone
+  let nearest = null, nearestDist = Infinity;
+  for (const z of RENT_ZONES) {
+    const d = haversine(lat, lng, z.lat, z.lng);
+    if (d < nearestDist) { nearest = z; nearestDist = d; }
+  }
+
+  if (nearestDist > 15000) return { name: 'Outside mapped area', cat: 'unknown' };
+  return nearest;
+}
+
+// ─────────────────────────────────────────────────────────────────
+// OVERPASS API QUERY
+// ─────────────────────────────────────────────────────────────────
+async function fetchPOIs(lat, lng, radius) {
+  const ar = `(around:${radius},${lat},${lng})`;
+  const query = `
+[out:json][timeout:30];
+(
+  node["amenity"~"^(university|college)$"]${ar};
+  way["amenity"~"^(university|college)$"]${ar};
+  node["amenity"="school"]["school"~"college|university|engineering|medical|polytechnic|institute|management|law|arts"]${ar};
+  node["office"]${ar};
+  way["office"]${ar};
+  node["building"="office"]${ar};
+  way["building"="office"]${ar};
+  node["office"="government"]${ar};
+  way["office"="government"]${ar};
+  node["amenity"~"^(courthouse|townhall)$"]${ar};
+  way["amenity"~"^(courthouse|townhall)$"]${ar};
+  node["amenity"="government"]${ar};
+  node["railway"="station"]${ar};
+  node["station"="subway"]${ar};
+  node["public_transport"="station"]${ar};
+  node["amenity"="bus_station"]${ar};
+  node["amenity"="marketplace"]${ar};
+  way["amenity"="marketplace"]${ar};
+  node["shop"="mall"]${ar};
+  way["shop"="mall"]${ar};
+  way["building"~"^(mall|retail)$"]${ar};
+);
+out center;
+  `.trim();
+
+  const res = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    body: 'data=' + encodeURIComponent(query),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// CLASSIFY ELEMENT
+// ─────────────────────────────────────────────────────────────────
+function classify(el) {
+  const t = el.tags || {};
+
+  if (t.amenity === 'university' || t.amenity === 'college') return 'students';
+  if (t.amenity === 'school' && /college|university|engineering|medical|polytechnic|institute|management|law|arts/i.test(JSON.stringify(t))) return 'students';
+
+  if (t.office === 'government' || t.amenity === 'courthouse' || t.amenity === 'townhall' || t.amenity === 'government') return 'govt';
+
+  if (t.office || t.building === 'office') return 'workers';
+
+  if (t.railway === 'station' || t.station === 'subway' || t.public_transport === 'station' || t.amenity === 'bus_station') return 'transit';
+
+  if (t.amenity === 'marketplace' || t.shop === 'mall' || t.building === 'mall' || t.building === 'retail') return 'markets';
+
+  return null;
+}
+
+function getCoords(el) {
+  if (el.type === 'node') return [el.lat, el.lon];
+  if (el.center) return [el.center.lat, el.center.lon];
+  return null;
+}
+
+function getName(el) {
+  const t = el.tags || {};
+  return t.name || t['name:en'] || t.operator || null;
+}
+
+function getSubtype(el) {
+  const t = el.tags || {};
+  const raw = t.office || t.amenity || t.railway || t.station || t.shop || t.building || '';
+  return raw.replace(/_/g, ' ');
+}
+
+// ─────────────────────────────────────────────────────────────────
+// FOOTFALL SCORE (0–100)
+// ─────────────────────────────────────────────────────────────────
+function calcScore(grouped) {
+  const students  = (grouped.students || []).length;
+  const workers   = (grouped.workers  || []).length + (grouped.govt || []).length;
+  const transit   = (grouped.transit  || []).length;
+  const markets   = (grouped.markets  || []).length;
+
+  // Score each factor 0–33
+  const sScore = Math.min(33, students * 8);
+  const wScore = Math.min(33, workers  * 3);
+  const tScore = Math.min(22, transit  * 7);
+  const mScore = Math.min(12, markets  * 4);
+
+  return Math.round(sScore + wScore + tScore + mScore);
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RENDER
+// ─────────────────────────────────────────────────────────────────
+const CATS = {
+  students: { label: 'Colleges & Universities', icon: '🎓', cls: 'cs-students', color: '#63b3ed' },
+  workers:  { label: 'Private Offices / IT',    icon: '💼', cls: 'cs-workers',  color: '#b794f4' },
+  govt:     { label: 'Government Offices',       icon: '🏛️', cls: 'cs-govt',     color: '#76e4f7' },
+  transit:  { label: 'Metro / Railway / Bus',    icon: '🚇', cls: 'cs-transit',  color: '#f6ad55' },
+  markets:  { label: 'Markets & Malls',          icon: '🛍️', cls: 'cs-markets',  color: '#68d391' },
+};
+
+function clearPoiLayers() {
+  poiLayers.forEach(l => map.removeLayer(l));
+  poiLayers = [];
+}
+
+function renderResults(grouped) {
+  clearPoiLayers();
+  const resultsDiv = document.getElementById('results');
+
+  const nStudents = (grouped.students || []).length;
+  const nWorkers  = (grouped.workers  || []).length + (grouped.govt || []).length;
+  const nTransit  = (grouped.transit  || []).length;
+  const score     = calcScore(grouped);
+
+  const scoreCls = score >= 60 ? 'score-high' : score >= 30 ? 'score-medium' : 'score-low';
+  const scoreTxt = score >= 60 ? 'Strong' : score >= 30 ? 'Moderate' : 'Low';
+
+  let html = `
+    <div class="summary-bar">
+      <div class="summary-pill sp-students">
+        <div class="sval">${nStudents}</div>
+        <div class="slbl">Colleges</div>
+      </div>
+      <div class="summary-pill sp-workers">
+        <div class="sval">${nWorkers}</div>
+        <div class="slbl">Offices</div>
+      </div>
+      <div class="summary-pill sp-transit">
+        <div class="sval">${nTransit}</div>
+        <div class="slbl">Transit</div>
+      </div>
+    </div>
+    <div class="score-bar ${scoreCls}">
+      <div class="score-label">Footfall Score</div>
+      <div class="score-track">
+        <div class="score-fill" style="width:${score}%"></div>
+      </div>
+      <div class="score-val">${score}/100 · ${scoreTxt}</div>
+    </div>
+  `;
+
+  let anyResults = false;
+
+  for (const [key, cfg] of Object.entries(CATS)) {
+    const items = grouped[key] || [];
+    if (items.length === 0) continue;
+    anyResults = true;
+
+    html += `
+      <div class="cat-section ${cfg.cls}">
+        <div class="cat-header" onclick="toggleSection(this)">
+          <div class="cat-icon">${cfg.icon}</div>
+          <div class="cat-title">${cfg.label}</div>
+          <div class="cat-count">${items.length}</div>
+          <div class="cat-chevron">▾</div>
+        </div>
+        <div class="cat-items">
+          ${items.map((item, idx) => `
+            <div class="poi-row" data-lat="${item.lat}" data-lng="${item.lng}">
+              <div class="poi-dot" style="background:${cfg.color}"></div>
+              <div class="poi-info">
+                <div class="poi-name">${item.name || 'Unnamed'}</div>
+                <div class="poi-type">${item.subtype || key}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+
+    // Map markers
+    items.forEach(item => {
+      if (!item.lat) return;
+      const m = L.circleMarker([item.lat, item.lng], {
+        radius: 5,
+        color: cfg.color,
+        fillColor: cfg.color,
+        fillOpacity: 0.85,
+        weight: 1.5,
+      }).bindPopup(`<strong>${item.name || 'Unnamed'}</strong><br><em>${cfg.label}</em>`).addTo(map);
+      poiLayers.push(m);
+    });
+  }
+
+  if (!anyResults) {
+    html += `<div class="no-results">No key locations found within this radius.<br>Try increasing the radius or picking a different spot.</div>`;
+  }
+
+  resultsDiv.innerHTML = html;
+
+  // POI row click → fly to
+  resultsDiv.querySelectorAll('.poi-row[data-lat]').forEach(row => {
+    row.addEventListener('click', () => {
+      const lat = parseFloat(row.dataset.lat);
+      const lng = parseFloat(row.dataset.lng);
+      if (!isNaN(lat)) map.flyTo([lat, lng], 16, { duration: 0.8 });
+    });
+  });
+}
+
+function toggleSection(headerEl) {
+  headerEl.closest('.cat-section').classList.toggle('collapsed');
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MAIN QUERY + RENDER
+// ─────────────────────────────────────────────────────────────────
+async function queryAndRender(lat, lng, radius) {
+  const resultsDiv  = document.getElementById('results');
+  const placeholder = document.getElementById('placeholder');
+  const locPanel    = document.getElementById('location-panel');
+
+  // Show location panel
+  const zone = getRentZone(lat, lng);
+  document.getElementById('location-name').textContent = zone.name || 'Unknown Area';
+  document.getElementById('location-coords').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+  const badge = document.getElementById('rent-badge');
+  badge.className = zone.cat || 'unknown';
+  badge.textContent = ZONE_LABELS[zone.cat] || '⬜ Unknown Area';
+  locPanel.style.display = 'block';
+
+  // Show loading
+  placeholder.style.display = 'none';
+  resultsDiv.style.display = 'block';
+  resultsDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning nearby locations…</div>';
+  clearPoiLayers();
+
+  try {
+    const data = await fetchPOIs(lat, lng, radius);
+    const grouped = {};
+    const seen = new Set();
+
+    for (const el of data.elements) {
+      const id = `${el.type}-${el.id}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+
+      const coords = getCoords(el);
+      if (!coords) continue;
+
+      const cat = classify(el);
+      if (!cat) continue;
+
+      if (!grouped[cat]) grouped[cat] = [];
+      grouped[cat].push({
+        name:    getName(el),
+        subtype: getSubtype(el),
+        lat:     coords[0],
+        lng:     coords[1],
+      });
+    }
+
+    renderResults(grouped);
+  } catch (err) {
+    resultsDiv.innerHTML = `<div class="error-msg">Failed to fetch data.<br>Check your internet connection and try again.<br><small style="opacity:0.5">${err.message}</small></div>`;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+// MAP CLICK
+// ─────────────────────────────────────────────────────────────────
+const PIN_ICON = L.divIcon({
+  html: `<div style="width:13px;height:13px;background:#f7941d;border:2.5px solid #fff;border-radius:50%;box-shadow:0 2px 10px rgba(247,148,29,0.6)"></div>`,
+  iconSize: [13, 13],
+  iconAnchor: [6.5, 6.5],
+  className: '',
+});
+
+map.on('click', e => {
+  const { lat, lng } = e.latlng;
+
+  if (currentMarker) map.removeLayer(currentMarker);
+  currentMarker = L.marker([lat, lng], { icon: PIN_ICON }).addTo(map);
+
+  redrawCircle(e.latlng);
+  queryAndRender(lat, lng, currentRadius);
+});
+
+// Sync slider display on load
+radiusDisplay.textContent = formatRadius(currentRadius);
+</script>
+</body>
+</html>
