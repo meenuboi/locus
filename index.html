@@ -394,6 +394,57 @@
       line-height: 1.5;
     }
 
+    /* ── Rent estimate ── */
+    #rent-estimate {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: #0f1117;
+      border: 1px solid #252840;
+      border-radius: 8px;
+    }
+
+    .re-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 4px;
+    }
+
+    .re-label {
+      font-size: 10px;
+      color: #4a5568;
+      text-transform: uppercase;
+      letter-spacing: 0.7px;
+    }
+
+    .re-sqft {
+      font-size: 10px;
+      color: #4a5568;
+      background: #1a1e2e;
+      border: 1px solid #252840;
+      border-radius: 4px;
+      padding: 1px 6px;
+    }
+
+    .re-value {
+      font-size: 17px;
+      font-weight: 700;
+      color: #f7941d;
+      line-height: 1.2;
+    }
+
+    .re-per-sqft {
+      font-size: 10px;
+      color: #4a5568;
+      margin-top: 3px;
+    }
+
+    .re-disclaimer {
+      font-size: 9px;
+      color: #2d3748;
+      margin-top: 5px;
+    }
+
     /* ── Rent segmentation toggle ── */
     #legend {
       display: flex;
@@ -777,6 +828,16 @@
           <button class="ro-btn ro-cheap"  data-cat="cheap">🟢 Cheap</button>
           <button class="ro-btn ro-cancel" id="ro-cancel">Cancel</button>
         </div>
+      </div>
+
+      <div id="rent-estimate" style="display:none">
+        <div class="re-header">
+          <span class="re-label">Est. commercial rent</span>
+          <span class="re-sqft">500 sqft</span>
+        </div>
+        <div class="re-value" id="re-value">—</div>
+        <div class="re-per-sqft" id="re-per-sqft"></div>
+        <div class="re-disclaimer">Indicative · verify with a local broker</div>
       </div>
     </div>
 
@@ -1365,10 +1426,11 @@ function deselectLocation() {
   if (currentCircle) { map.removeLayer(currentCircle); currentCircle = null; }
   if (pendingQuery)  { clearTimeout(pendingQuery); pendingQuery = null; }
   clearPoiLayers();
-  document.getElementById('location-panel').style.display  = 'none';
-  document.getElementById('results').style.display         = 'none';
-  document.getElementById('placeholder').style.display     = 'flex';
+  document.getElementById('location-panel').style.display     = 'none';
+  document.getElementById('results').style.display            = 'none';
+  document.getElementById('placeholder').style.display        = 'flex';
   document.getElementById('rent-override-panel').style.display = 'none';
+  document.getElementById('rent-estimate').style.display       = 'none';
 }
 
 document.addEventListener('keydown', e => {
@@ -1559,6 +1621,106 @@ async function getRentZoneEnhanced(lat, lng) {
 }
 
 // ─────────────────────────────────────────────────────────────────
+// RENT RATE TABLE  (₹ per sqft per month, commercial, 2025 estimate)
+// Ranges reflect ground-floor / street-facing shop rents.
+// ─────────────────────────────────────────────────────────────────
+const LOCALITY_RENT_RATE = {
+  // HIGH areas
+  'connaught place':[250,420], 'connaught circus':[230,400],
+  'khan market':[300,500],
+  'hauz khas':[150,280],       'green park':[120,200],
+  'greater kailash':[120,200], 'greater kailash i':[130,210], 'greater kailash ii':[120,200],
+  'defence colony':[130,210],  'vasant kunj':[90,150],
+  'saket':[110,180],           'nehru place':[160,260],
+  'south extension':[130,220], 'lajpat nagar':[110,185],
+  'lodi colony':[130,200],     'civil lines':[100,170],
+  'punjabi bagh':[90,150],     'chanakya puri':[150,280],
+  'east of kailash':[110,180], 'c r park':[100,170], 'cr park':[100,170],
+  'jangpura extension':[110,180],
+  'r k puram':[100,160],       'safdarjung enclave':[100,170],
+  'mukherjee nagar':[65,110],  'kamla nagar':[70,120],
+  'cyber city':[160,280],      'cybercity':[160,280], 'dlf cyber city':[160,280],
+  'golf course road':[130,220],'mg road':[110,185],
+  'dlf city':[130,220],        'dlf phase 1':[130,220], 'dlf phase 2':[140,230],
+  'dlf phase 3':[120,200],     'dlf phase 4':[110,185], 'dlf phase 5':[120,200],
+  'sushant lok':[100,175],
+  'sector 18':[90,160],        'sector 62':[80,140],
+  'noida city centre':[90,160],'sector 44':[80,130],
+  'aerocity':[180,300],        'mandi house':[140,240],
+
+  // MEDIUM areas
+  'dwarka':[55,95],            'janakpuri':[55,95],
+  'rajouri garden':[65,115],   'paschim vihar':[55,90],
+  'rohini':[45,80],            'pitampura':[50,85],
+  'karol bagh':[70,125],       'kirti nagar':[60,100],
+  'naraina':[55,90],           'patel nagar':[55,90],
+  'malviya nagar':[70,120],    'munirka':[55,95],
+  'moti bagh':[65,110],        'laxmi nagar':[50,85],
+  'preet vihar':[50,85],       'mayur vihar':[50,90],
+  'patparganj':[55,95],        'vasundhara enclave':[55,90],
+  'vivek vihar':[50,85],       'karkardooma':[55,90],
+  'krishna nagar':[50,85],     'geeta colony':[45,80],
+  'model town':[55,90],        'shakti nagar':[50,85],
+  'sarita vihar':[55,90],      'kalkaji':[75,130],
+  'uttam nagar':[45,80],       'vikaspuri':[45,80],
+  'tilak nagar':[50,85],       'hari nagar':[48,82],
+  'palam':[48,80],             'palam vihar':[50,85],
+  'indirapuram':[60,105],      'sahibabad':[45,80],
+  'vaishali':[55,95],          'kaushambi':[55,95],
+  'crossings republik':[50,85],'crossings republic':[50,85],
+  'rajnagar extension':[45,80],
+  'greater noida west':[40,70],'sohna road':[60,110],
+  'shastri nagar':[48,82],     'yamuna vihar':[45,78],
+  'dilshad garden':[48,82],    'pahar ganj':[60,110],
+  'paharganj':[60,110],        'rajendra place':[80,140],
+  'sarojini nagar':[80,140],   'ina colony':[75,130],
+  'yusuf sarai':[70,120],      'subhash nagar':[55,90],
+  'tagore garden':[55,90],
+
+  // CHEAP areas
+  'shahdara':[30,55],          'seelampur':[25,48],
+  'badarpur':[25,48],          'sangam vihar':[20,40],
+  'govindpuri':[25,48],        'tughlakabad':[20,40],
+  'okhla':[35,65],
+  'faridabad':[22,42],         'ballabhgarh':[15,32],
+  'ghaziabad':[22,42],         'loni':[15,32],
+  'narela':[15,30],            'bawana':[12,26],
+  'najafgarh':[15,30],         'burari':[20,40],
+  'mangolpuri':[20,38],        'sultanpuri':[18,35],
+  'nangloi':[22,42],           'kirari':[18,35],
+  'chandni chowk':[50,90],     'old delhi':[38,70],
+  'sadar bazar':[40,75],       'trilokpuri':[22,42],
+  'kapashera':[25,50],         'mehrauli':[28,52],
+  'jahangirpuri':[18,35],      'mundka':[20,38],
+  'bindapur':[20,38],
+};
+
+// Category fallbacks when locality not in table
+const CAT_RATE_DEFAULT = { high:[100,220], medium:[50,95], cheap:[20,52] };
+
+function getRentEstimate(localityName, cat) {
+  const key = (localityName || '').toLowerCase().trim();
+  let rate = LOCALITY_RENT_RATE[key];
+
+  if (!rate && key) {
+    for (const [loc, r] of Object.entries(LOCALITY_RENT_RATE)) {
+      if (key.includes(loc) || loc.includes(key)) { rate = r; break; }
+    }
+  }
+
+  if (!rate) rate = CAT_RATE_DEFAULT[cat] || [40, 100];
+  return rate;
+}
+
+function updateRentEstimate(localityName, cat) {
+  const [minPsf, maxPsf] = getRentEstimate(localityName, cat);
+  const fmt = n => '₹' + (n * 500).toLocaleString('en-IN');
+  document.getElementById('re-value').textContent    = `${fmt(minPsf)} – ${fmt(maxPsf)} / mo`;
+  document.getElementById('re-per-sqft').textContent = `₹${minPsf}–${maxPsf} per sqft · 500 sqft`;
+  document.getElementById('rent-estimate').style.display = 'block';
+}
+
+// ─────────────────────────────────────────────────────────────────
 // RENT BADGE UPDATE  (shared helper)
 // ─────────────────────────────────────────────────────────────────
 function updateRentUI(zone) {
@@ -1572,6 +1734,7 @@ function updateRentUI(zone) {
     parseFloat(document.getElementById('location-coords').textContent.split(',')[0]),
     parseFloat(document.getElementById('location-coords').textContent.split(',')[1])
   );
+  updateRentEstimate(zone.name, zone.cat);
 }
 
 // ─────────────────────────────────────────────────────────────────
