@@ -663,42 +663,67 @@ function getRentZone(lat, lng) {
 // ─────────────────────────────────────────────────────────────────
 // OVERPASS API QUERY
 // ─────────────────────────────────────────────────────────────────
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
+];
+
 async function fetchPOIs(lat, lng, radius) {
   const ar = `(around:${radius},${lat},${lng})`;
+  // Use nwr (node+way+relation) so large campuses, IT parks and
+  // metro stations mapped as relations/areas are also returned.
   const query = `
-[out:json][timeout:30];
+[out:json][timeout:35];
 (
-  node["amenity"~"^(university|college)$"]${ar};
-  way["amenity"~"^(university|college)$"]${ar};
-  node["amenity"="school"]["school"~"college|university|engineering|medical|polytechnic|institute|management|law|arts"]${ar};
-  node["office"]${ar};
-  way["office"]${ar};
-  node["building"="office"]${ar};
-  way["building"="office"]${ar};
-  node["office"="government"]${ar};
-  way["office"="government"]${ar};
-  node["amenity"~"^(courthouse|townhall)$"]${ar};
-  way["amenity"~"^(courthouse|townhall)$"]${ar};
-  node["amenity"="government"]${ar};
-  node["railway"="station"]${ar};
-  node["station"="subway"]${ar};
-  node["public_transport"="station"]${ar};
-  node["amenity"="bus_station"]${ar};
-  node["amenity"="marketplace"]${ar};
-  way["amenity"="marketplace"]${ar};
-  node["shop"="mall"]${ar};
-  way["shop"="mall"]${ar};
-  way["building"~"^(mall|retail)$"]${ar};
+  nwr["amenity"~"^(university|college)$"]${ar};
+  nwr["building"~"^(university|college)$"]${ar};
+  nwr["landuse"="education"]${ar};
+
+  nwr["office"]${ar};
+  nwr["building"~"^(office|commercial)$"]${ar};
+
+  nwr["office"="government"]${ar};
+  nwr["amenity"~"^(courthouse|townhall|public_building|police|post_office)$"]${ar};
+  nwr["government"]${ar};
+
+  nwr["railway"~"^(station|halt)$"]${ar};
+  nwr["station"="subway"]${ar};
+  nwr["public_transport"~"^(station|stop_area)$"]${ar};
+  nwr["amenity"="bus_station"]${ar};
+  node["highway"="bus_stop"]["name"]${ar};
+
+  nwr["amenity"="marketplace"]${ar};
+  nwr["shop"~"^(mall|department_store|supermarket)$"]${ar};
+  nwr["building"~"^(mall|retail|supermarket)$"]${ar};
+  nwr["landuse"="retail"]${ar};
 );
 out center;
   `.trim();
 
-  const res = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    body: 'data=' + encodeURIComponent(query),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  let lastErr;
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        body: 'data=' + encodeURIComponent(query),
+      });
+      if (!res.ok) { lastErr = new Error(`HTTP ${res.status} from ${endpoint}`); continue; }
+      const data = await res.json();
+      console.log(`[Locus] ${data.elements.length} raw elements from ${endpoint}`);
+      data.elements.slice(0, 30).forEach(e => {
+        const t = e.tags || {};
+        console.log(t.name || '(unnamed)', '→ cat:', classify(e),
+          '| tags:', JSON.stringify({amenity:t.amenity, office:t.office, building:t.building,
+          railway:t.railway, station:t.station, shop:t.shop, landuse:t.landuse, highway:t.highway}));
+      });
+      return data;
+    } catch (err) {
+      console.warn(`[Locus] ${endpoint} failed:`, err.message);
+      lastErr = err;
+    }
+  }
+  throw lastErr || new Error('All Overpass endpoints failed');
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -707,16 +732,32 @@ out center;
 function classify(el) {
   const t = el.tags || {};
 
+  // Students
   if (t.amenity === 'university' || t.amenity === 'college') return 'students';
-  if (t.amenity === 'school' && /college|university|engineering|medical|polytechnic|institute|management|law|arts/i.test(JSON.stringify(t))) return 'students';
+  if (t.building === 'university' || t.building === 'college') return 'students';
+  if (t.landuse === 'education') return 'students';
 
-  if (t.office === 'government' || t.amenity === 'courthouse' || t.amenity === 'townhall' || t.amenity === 'government') return 'govt';
+  // Government (check before generic office so govt offices are correctly binned)
+  if (t.office === 'government' || t.government) return 'govt';
+  if (t.amenity === 'courthouse' || t.amenity === 'townhall' ||
+      t.amenity === 'public_building' || t.amenity === 'police' ||
+      t.amenity === 'post_office') return 'govt';
 
-  if (t.office || t.building === 'office') return 'workers';
+  // Private offices / IT (any office= tag that isn't government)
+  if (t.office) return 'workers';
+  if (t.building === 'office' || t.building === 'commercial') return 'workers';
 
-  if (t.railway === 'station' || t.station === 'subway' || t.public_transport === 'station' || t.amenity === 'bus_station') return 'transit';
+  // Transit
+  if (t.railway === 'station' || t.railway === 'halt') return 'transit';
+  if (t.station === 'subway') return 'transit';
+  if (t.public_transport === 'station' || t.public_transport === 'stop_area') return 'transit';
+  if (t.amenity === 'bus_station' || t.highway === 'bus_stop') return 'transit';
 
-  if (t.amenity === 'marketplace' || t.shop === 'mall' || t.building === 'mall' || t.building === 'retail') return 'markets';
+  // Markets & malls
+  if (t.amenity === 'marketplace') return 'markets';
+  if (t.shop === 'mall' || t.shop === 'department_store' || t.shop === 'supermarket') return 'markets';
+  if (t.building === 'mall' || t.building === 'retail' || t.building === 'supermarket') return 'markets';
+  if (t.landuse === 'retail') return 'markets';
 
   return null;
 }
@@ -729,13 +770,21 @@ function getCoords(el) {
 
 function getName(el) {
   const t = el.tags || {};
-  return t.name || t['name:en'] || t.operator || null;
+  return t.name || t['name:en'] || t['name:hi'] || t.operator || null;
 }
 
 function getSubtype(el) {
   const t = el.tags || {};
-  const raw = t.office || t.amenity || t.railway || t.station || t.shop || t.building || '';
-  return raw.replace(/_/g, ' ');
+  if (t.office)        return t.office.replace(/_/g, ' ');
+  if (t.amenity)       return t.amenity.replace(/_/g, ' ');
+  if (t.railway)       return t.railway.replace(/_/g, ' ');
+  if (t.station)       return t.station.replace(/_/g, ' ');
+  if (t.public_transport) return t.public_transport.replace(/_/g, ' ');
+  if (t.shop)          return t.shop.replace(/_/g, ' ');
+  if (t.building)      return t.building.replace(/_/g, ' ');
+  if (t.landuse)       return t.landuse.replace(/_/g, ' ');
+  if (t.highway)       return 'bus stop';
+  return '';
 }
 
 // ─────────────────────────────────────────────────────────────────
