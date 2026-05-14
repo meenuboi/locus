@@ -103,14 +103,6 @@
     }
 
     /* ── Legend ── */
-    #legend {
-      padding: 10px 20px;
-      border-bottom: 1px solid #252840;
-      display: flex;
-      gap: 12px;
-      flex-shrink: 0;
-    }
-
     .legend-item {
       display: flex;
       align-items: center;
@@ -400,6 +392,59 @@
       font-size: 12px;
       text-align: center;
       line-height: 1.5;
+    }
+
+    /* ── Rent segmentation toggle ── */
+    #legend {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 10px 14px;
+      border-bottom: 1px solid #252840;
+      flex-shrink: 0;
+    }
+
+    .legend-dots {
+      display: flex;
+      gap: 12px;
+    }
+
+    #rent-seg-btn {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      padding: 7px 12px;
+      background: #0f1117;
+      border: 1px solid #252840;
+      border-radius: 8px;
+      color: #718096;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      transition: all 0.15s;
+      letter-spacing: 0.3px;
+    }
+
+    #rent-seg-btn:hover { border-color: #4a5568; color: #a0aec0; }
+
+    #rent-seg-btn.active {
+      border-color: #a0aec0;
+      color: #e2e8f0;
+      background: rgba(160,174,192,0.08);
+    }
+
+    .seg-swatch {
+      display: flex;
+      gap: 3px;
+    }
+
+    .seg-swatch span {
+      width: 8px;
+      height: 8px;
+      border-radius: 2px;
     }
 
     /* ── Rent override ── */
@@ -701,9 +746,19 @@
     </div>
 
     <div id="legend">
-      <div class="legend-item"><div class="legend-dot" style="background:#e53e3e;opacity:0.7"></div> High rent</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#dd6b20;opacity:0.7"></div> Medium</div>
-      <div class="legend-item"><div class="legend-dot" style="background:#38a169;opacity:0.7"></div> Affordable</div>
+      <div class="legend-dots">
+        <div class="legend-item"><div class="legend-dot" style="background:#e53e3e;opacity:0.7"></div> High rent</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#dd6b20;opacity:0.7"></div> Medium</div>
+        <div class="legend-item"><div class="legend-dot" style="background:#38a169;opacity:0.7"></div> Affordable</div>
+      </div>
+      <button id="rent-seg-btn">
+        <div class="seg-swatch">
+          <span style="background:#e53e3e"></span>
+          <span style="background:#dd6b20"></span>
+          <span style="background:#38a169"></span>
+        </div>
+        Segment Map by Rent
+      </button>
     </div>
 
     <div id="location-panel" style="display:none">
@@ -829,18 +884,37 @@ L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
 const ZONE_COLORS = { high: '#e53e3e', medium: '#dd6b20', cheap: '#38a169' };
 const ZONE_LABELS = { high: '🔴 High Rent', medium: '🟡 Medium Rent', cheap: '🟢 Affordable' };
 
-RENT_ZONES.forEach(z => {
-  L.circle([z.lat, z.lng], {
+const SUBTLE_STYLE   = { fillOpacity: 0.07, weight: 0.8,  opacity: 0.3  };
+const PROMINENT_STYLE = { fillOpacity: 0.28, weight: 2,    opacity: 0.65 };
+
+const zoneCircles = RENT_ZONES.map(z => {
+  const circle = L.circle([z.lat, z.lng], {
     radius: z.r,
     color: ZONE_COLORS[z.cat],
     fillColor: ZONE_COLORS[z.cat],
-    fillOpacity: 0.07,
-    weight: 0.8,
-    opacity: 0.3,
+    ...SUBTLE_STYLE,
   }).bindTooltip(`<strong>${z.name}</strong><br>${ZONE_LABELS[z.cat]}`, {
     sticky: true,
     className: 'rent-tip',
   }).addTo(map);
+  return { circle, cat: z.cat };
+});
+
+// ── Rent Segmentation Toggle ──
+let rentSegActive = false;
+
+document.getElementById('rent-seg-btn').addEventListener('click', () => {
+  rentSegActive = !rentSegActive;
+  const btn = document.getElementById('rent-seg-btn');
+
+  zoneCircles.forEach(({ circle }) => {
+    circle.setStyle(rentSegActive ? PROMINENT_STYLE : SUBTLE_STYLE);
+  });
+
+  btn.classList.toggle('active', rentSegActive);
+  btn.innerHTML = rentSegActive
+    ? `<div class="seg-swatch"><span style="background:#e53e3e"></span><span style="background:#dd6b20"></span><span style="background:#38a169"></span></div> Hide Segmentation`
+    : `<div class="seg-swatch"><span style="background:#e53e3e"></span><span style="background:#dd6b20"></span><span style="background:#38a169"></span></div> Segment Map by Rent`;
 });
 
 // ─────────────────────────────────────────────────────────────────
