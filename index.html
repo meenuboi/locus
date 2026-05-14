@@ -402,6 +402,67 @@
       line-height: 1.5;
     }
 
+    /* ── Rent override ── */
+    #rent-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    #rent-source {
+      font-size: 10px;
+      color: #4a5568;
+      margin-top: 3px;
+    }
+
+    #report-btn {
+      background: none;
+      border: 1px solid #252840;
+      border-radius: 6px;
+      color: #4a5568;
+      font-size: 10px;
+      padding: 3px 7px;
+      cursor: pointer;
+      font-family: inherit;
+      white-space: nowrap;
+      transition: all 0.15s;
+    }
+
+    #report-btn:hover { border-color: #4a5568; color: #a0aec0; }
+
+    #rent-override-panel {
+      margin-top: 8px;
+      background: #0f1117;
+      border: 1px solid #252840;
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+
+    .ro-label { font-size: 10px; color: #4a5568; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.6px; }
+
+    .ro-options { display: flex; gap: 5px; }
+
+    .ro-btn {
+      flex: 1;
+      padding: 5px 4px;
+      border-radius: 6px;
+      border: 1px solid #252840;
+      background: #141622;
+      color: #a0aec0;
+      font-size: 10px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+      transition: all 0.15s;
+    }
+
+    .ro-btn:hover { border-color: #4a5568; }
+    .ro-btn.ro-high   { color: #fc8181; }
+    .ro-btn.ro-medium { color: #f6ad55; }
+    .ro-btn.ro-cheap  { color: #68d391; }
+    .ro-btn.ro-cancel { color: #4a5568; }
+
     /* ── Search ── */
     #search-section {
       padding: 10px 14px;
@@ -648,7 +709,20 @@
     <div id="location-panel" style="display:none">
       <div id="location-name">—</div>
       <div id="location-coords"></div>
-      <div id="rent-badge"></div>
+      <div id="rent-source"></div>
+      <div id="rent-row">
+        <div id="rent-badge"></div>
+        <button id="report-btn" title="Mark this rent level as incorrect">✏ Wrong?</button>
+      </div>
+      <div id="rent-override-panel" style="display:none">
+        <div class="ro-label">Set correct rent level for this locality</div>
+        <div class="ro-options">
+          <button class="ro-btn ro-high"   data-cat="high">🔴 High</button>
+          <button class="ro-btn ro-medium" data-cat="medium">🟡 Medium</button>
+          <button class="ro-btn ro-cheap"  data-cat="cheap">🟢 Cheap</button>
+          <button class="ro-btn ro-cancel" id="ro-cancel">Cancel</button>
+        </div>
+      </div>
     </div>
 
     <div id="results-scroll">
@@ -1129,13 +1203,12 @@ async function queryAndRender(lat, lng, radius) {
   const placeholder = document.getElementById('placeholder');
   const locPanel    = document.getElementById('location-panel');
 
-  // Show location panel
-  const zone = getRentZone(lat, lng);
-  document.getElementById('location-name').textContent = zone.name || 'Unknown Area';
+  // Show a quick circle-based rent immediately, then refine
+  const quickZone = getRentZone(lat, lng);
   document.getElementById('location-coords').textContent = `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
-  const badge = document.getElementById('rent-badge');
-  badge.className = zone.cat || 'unknown';
-  badge.textContent = ZONE_LABELS[zone.cat] || '⬜ Unknown Area';
+  document.getElementById('rent-source').textContent = 'Identifying locality…';
+  updateRentUI({ ...quickZone, source: 'identifying…' });
+  document.getElementById('rent-override-panel').style.display = 'none';
   locPanel.style.display = 'block';
 
   // Show loading
@@ -1144,8 +1217,18 @@ async function queryAndRender(lat, lng, radius) {
   resultsDiv.innerHTML = '<div class="loading"><div class="spinner"></div>Scanning nearby locations…</div>';
   clearPoiLayers();
 
+  // Run rent lookup and POI fetch in parallel
+  const [zoneResult, poiResult] = await Promise.allSettled([
+    getRentZoneEnhanced(lat, lng),
+    fetchPOIs(lat, lng, radius),
+  ]);
+
+  // Update rent badge with the more accurate result
+  if (zoneResult.status === 'fulfilled') updateRentUI(zoneResult.value);
+
   try {
-    const data = await fetchPOIs(lat, lng, radius);
+    if (poiResult.status === 'rejected') throw poiResult.reason;
+    const data = poiResult.value;
     const grouped = {};
     const seen = new Set();
 
@@ -1197,6 +1280,253 @@ map.on('click', e => {
 
 // Sync slider display on load
 radiusDisplay.textContent = formatRadius(currentRadius);
+
+// ─────────────────────────────────────────────────────────────────
+// ESC → DESELECT LOCATION
+// ─────────────────────────────────────────────────────────────────
+function deselectLocation() {
+  if (currentMarker) { map.removeLayer(currentMarker); currentMarker = null; }
+  if (currentCircle) { map.removeLayer(currentCircle); currentCircle = null; }
+  if (pendingQuery)  { clearTimeout(pendingQuery); pendingQuery = null; }
+  clearPoiLayers();
+  document.getElementById('location-panel').style.display  = 'none';
+  document.getElementById('results').style.display         = 'none';
+  document.getElementById('placeholder').style.display     = 'flex';
+  document.getElementById('rent-override-panel').style.display = 'none';
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && !e.target.closest('#search-input')) deselectLocation();
+});
+
+// ─────────────────────────────────────────────────────────────────
+// LOCALITY → RENT MAPPING  (Delhi NCR, 250+ localities)
+// Basis: known commercial rental market data as of 2025.
+// Used when Nominatim reverse-geocoding identifies the locality.
+// ─────────────────────────────────────────────────────────────────
+const LOCALITY_RENT = {
+  // ── HIGH ──
+  'connaught place':'high','connaught circus':'high','cp':'high',
+  'khan market':'high','hauz khas':'high','green park':'high',
+  'greater kailash':'high','greater kailash i':'high','greater kailash ii':'high',
+  'greater kailash 1':'high','greater kailash 2':'high','gk i':'high','gk ii':'high',
+  'defence colony':'high','vasant kunj':'high','vasant vihar':'high',
+  'saket':'high','nehru place':'high',
+  'south extension':'high','south extension i':'high','south extension ii':'high',
+  'south extension part i':'high','south extension part ii':'high',
+  'lodi colony':'high','lodi estate':'high','jor bagh':'high',
+  'golf links':'high','friends colony':'high','new friends colony':'high',
+  'maharani bagh':'high','nizamuddin east':'high',
+  'sujan singh park':'high','sundar nagar':'high',
+  'chanakya puri':'high','chanakyapuri':'high',
+  'new moti bagh':'high','shanti niketan':'high',
+  'civil lines':'high','punjabi bagh':'high',
+  'gulmohar park':'high','panchsheel park':'high','panchsheel enclave':'high',
+  'panch sheel park':'high','panch sheel enclave':'high',
+  'sarvpriya vihar':'high','uday park':'high',
+  'east of kailash':'high','c r park':'high','cr park':'high','chittaranjan park':'high',
+  'anand lok':'high','jangpura extension':'high',
+  'malcha marg':'high','sardar patel marg':'high','westend':'high',
+  'kaka nagar':'high','bengali market':'high','niti bagh':'high',
+  'nauroji nagar':'high','r k puram':'high','rk puram':'high','rkpuram':'high',
+  'safdarjung enclave':'high','safdurjung enclave':'high',
+  'safdarjung development area':'high','sda':'high',
+  'andrewsganj':'high','andrews ganj':'high',
+  'lajpat nagar':'high','mandi house':'high',
+  'golf course road':'high','cyber city':'high','cybercity':'high',
+  'dlf cyber city':'high','dlf city':'high',
+  'mg road':'high','sushant lok':'high',
+  'south city 1':'high','south city 2':'high','south city':'high',
+  'nirvana country':'high','emaar hills':'high',
+  'dlf phase 1':'high','dlf phase 2':'high','dlf phase 3':'high',
+  'dlf phase 4':'high','dlf phase 5':'high',
+  'sector 18':'high','sector 62':'high','sector 44':'high',
+  'noida city centre':'high','sector 25a':'high',
+  'sector 93':'high','sector 93b':'high','sector 128':'high','sector 137':'high',
+  'expressway':'high',
+  'aerocity':'high','mahipalpur':'medium',
+  'alaknanda':'high','jasola':'medium','jasola vihar':'medium',
+
+  // ── MEDIUM ──
+  'ashok vihar':'medium','dwarka':'medium',
+  'dwarka sector 1':'medium','dwarka sector 2':'medium','dwarka sector 3':'medium',
+  'dwarka sector 4':'medium','dwarka sector 5':'medium','dwarka sector 6':'medium',
+  'dwarka sector 7':'medium','dwarka sector 8':'medium','dwarka sector 9':'medium',
+  'dwarka sector 10':'medium','dwarka sector 11':'medium','dwarka sector 12':'medium',
+  'dwarka sector 13':'medium','dwarka sector 14':'medium',
+  'dwarka sector 19':'medium','dwarka sector 20':'medium','dwarka sector 21':'medium',
+  'janakpuri':'medium','rajouri garden':'medium',
+  'paschim vihar':'medium','rohini':'medium',
+  'rohini sector 1':'medium','rohini sector 2':'medium','rohini sector 3':'medium',
+  'rohini sector 7':'medium','rohini sector 8':'medium','rohini sector 9':'medium',
+  'pitampura':'medium','karol bagh':'medium',
+  'kirti nagar':'medium','naraina':'medium','patel nagar':'medium',
+  'malviya nagar':'medium','munirka':'medium','moti bagh':'medium',
+  'laxmi nagar':'medium','preet vihar':'medium','mayur vihar':'medium',
+  'mayur vihar phase 1':'medium','mayur vihar phase 2':'medium','mayur vihar phase 3':'medium',
+  'patparganj':'medium','vasundhara enclave':'medium',
+  'vivek vihar':'medium','karkardooma':'medium',
+  'krishna nagar':'medium','geeta colony':'medium',
+  'model town':'medium','mukherjee nagar':'medium',
+  'kamla nagar':'medium','shakti nagar':'medium',
+  'sarita vihar':'medium','kalkaji':'medium',
+  'uttam nagar':'medium','vikaspuri':'medium',
+  'tilak nagar':'medium','hari nagar':'medium',
+  'palam':'medium','palam vihar':'medium',
+  'indirapuram':'medium','sahibabad':'medium',
+  'vaishali':'medium','kaushambi':'medium',
+  'crossings republik':'medium','crossings republic':'medium',
+  'rajnagar extension':'medium','raj nagar extension':'medium',
+  'greater noida west':'medium',
+  'sohna road':'medium','shastri nagar':'medium',
+  'yamuna vihar':'medium','dilshad garden':'medium',
+  'pahar ganj':'medium','paharganj':'medium',
+  'rajendra place':'medium','sarojini nagar':'medium',
+  'ina colony':'medium','yusuf sarai':'medium',
+  'green park extension':'medium',
+  'subhash nagar':'medium','tagore garden':'medium',
+  'punjabi bagh extension':'medium',
+  'new ashok nagar':'medium',
+  'sector 37':'medium','sector 45':'medium','sector 46':'medium',
+  'sector 50':'medium','sector 51':'medium','sector 52':'medium',
+  'sector 63':'medium','tech zone 4':'medium','pari chowk':'medium',
+  'nhpc colony':'medium','sector 15 faridabad':'medium',
+  'sector 16 faridabad':'medium','sector 17 faridabad':'medium',
+  'greater noida':'medium',
+  'noida extension':'medium',
+
+  // ── CHEAP ──
+  'shahdara':'cheap','seelampur':'cheap','badarpur':'cheap',
+  'sangam vihar':'cheap','govindpuri':'cheap',
+  'tughlakabad':'cheap','tigri':'cheap',
+  'okhla':'cheap','okhla phase 1':'cheap','okhla phase 2':'cheap',
+  'faridabad':'cheap','ballabhgarh':'cheap',
+  'ghaziabad':'cheap','loni':'cheap',
+  'narela':'cheap','bawana':'cheap','najafgarh':'cheap',
+  'burari':'cheap','mangolpuri':'cheap','sultanpuri':'cheap',
+  'nangloi':'cheap','kirari':'cheap','peeragarhi':'cheap',
+  'molarband':'cheap','madanpur khadar':'cheap',
+  'kondli':'cheap','jaffrabad':'cheap','mustafabad':'cheap',
+  'ghonda':'cheap','chandni chowk':'cheap','old delhi':'cheap',
+  'sadar bazar':'cheap','trilokpuri':'cheap','seemapuri':'cheap',
+  'kapashera':'cheap','mehrauli':'cheap','pul bangash':'cheap',
+  'bhalswa':'cheap','jahangirpuri':'cheap','samaypur badli':'cheap',
+  'badli':'cheap','adarsh nagar':'cheap','khyala':'cheap',
+  'bahadurgarh':'cheap','mundka':'cheap','peeragarhi':'cheap',
+  'bindapur':'cheap','dashrath puri':'cheap','kakrola':'cheap',
+  'mohan garden':'cheap',
+};
+
+// ─────────────────────────────────────────────────────────────────
+// ENHANCED RENT ZONE  (Nominatim reverse geocoding + locality lookup)
+// ─────────────────────────────────────────────────────────────────
+let currentLocalityKey = null; // used by the "Report wrong" button
+
+function coordKey(lat, lng) {
+  return `${(Math.round(lat * 50) / 50).toFixed(2)},${(Math.round(lng * 50) / 50).toFixed(2)}`;
+}
+
+function loadOverride(key) {
+  try { return JSON.parse(localStorage.getItem('rent_override_' + key)); } catch { return null; }
+}
+
+function saveOverride(key, cat) {
+  try { localStorage.setItem('rent_override_' + key, JSON.stringify({ cat, name: key, source: 'user' })); } catch {}
+}
+
+function lookupLocality(name) {
+  if (!name) return null;
+  const k = name.toLowerCase().trim();
+  if (LOCALITY_RENT[k]) return LOCALITY_RENT[k];
+  // Partial match: known locality appears inside the Nominatim string
+  for (const [loc, cat] of Object.entries(LOCALITY_RENT)) {
+    if (k.includes(loc)) return cat;
+  }
+  return null;
+}
+
+async function getRentZoneEnhanced(lat, lng) {
+  // 1. User overrides take highest priority
+  const ck = coordKey(lat, lng);
+  const override = loadOverride(ck);
+  if (override) return { ...override, source: 'your correction' };
+
+  // 2. Nominatim reverse geocoding → locality name lookup
+  try {
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&addressdetails=1&zoom=16`,
+      { headers: { 'Accept-Language': 'en' } }
+    );
+    if (res.ok) {
+      const data = await res.json();
+      const addr = data.address || {};
+      const fields = [addr.suburb, addr.neighbourhood, addr.quarter, addr.city_district, addr.residential];
+      for (const field of fields.filter(Boolean)) {
+        const cat = lookupLocality(field);
+        if (cat) {
+          currentLocalityKey = field.toLowerCase().trim();
+          return { name: field, cat, source: `${field} · locality data` };
+        }
+      }
+      // Nominatim responded but no locality match — fall through with the suburb name
+      const displayName = addr.suburb || addr.city_district || null;
+      const fallback = getRentZone(lat, lng);
+      return { ...fallback, name: displayName || fallback.name, source: 'approximate zone' };
+    }
+  } catch (err) {
+    console.warn('[Locus] reverse geocode failed:', err.message);
+  }
+
+  // 3. Fall back to circle-based system
+  const zone = getRentZone(lat, lng);
+  return { ...zone, source: 'approximate zone' };
+}
+
+// ─────────────────────────────────────────────────────────────────
+// RENT BADGE UPDATE  (shared helper)
+// ─────────────────────────────────────────────────────────────────
+function updateRentUI(zone) {
+  const badge  = document.getElementById('rent-badge');
+  const source = document.getElementById('rent-source');
+  badge.className = zone.cat || 'unknown';
+  badge.textContent = ZONE_LABELS[zone.cat] || '⬜ Unknown';
+  source.textContent = zone.source ? `Based on: ${zone.source}` : '';
+  document.getElementById('location-name').textContent = zone.name || '—';
+  currentLocalityKey = zone.name ? zone.name.toLowerCase().trim() : coordKey(
+    parseFloat(document.getElementById('location-coords').textContent.split(',')[0]),
+    parseFloat(document.getElementById('location-coords').textContent.split(',')[1])
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// REPORT WRONG RENT  (localStorage override)
+// ─────────────────────────────────────────────────────────────────
+document.getElementById('report-btn').addEventListener('click', () => {
+  const panel = document.getElementById('rent-override-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+});
+
+document.getElementById('ro-cancel').addEventListener('click', () => {
+  document.getElementById('rent-override-panel').style.display = 'none';
+});
+
+document.querySelectorAll('.ro-btn[data-cat]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const cat = btn.dataset.cat;
+    // Save by both locality key and coord key for coverage
+    const key = currentLocalityKey || coordKey(
+      currentMarker?.getLatLng().lat, currentMarker?.getLatLng().lng
+    );
+    saveOverride(key, cat);
+    // Also save coord key
+    if (currentMarker) {
+      const { lat, lng } = currentMarker.getLatLng();
+      saveOverride(coordKey(lat, lng), cat);
+    }
+    updateRentUI({ cat, name: key, source: 'your correction' });
+    document.getElementById('rent-override-panel').style.display = 'none';
+  });
+});
 
 // ─────────────────────────────────────────────────────────────────
 // LOCATION SEARCH  (Nominatim geocoding)
